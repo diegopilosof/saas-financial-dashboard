@@ -31,10 +31,29 @@ Get a key at <https://console.anthropic.com/settings/keys>.
 | File | Purpose | Committed? |
 |---|---|---|
 | `dashboard.html` | The whole app | ✅ |
-| `config.example.js` | Template for users to copy | ✅ |
-| `config.local.js` | Your real key | ❌ (gitignored) |
-| `.gitignore` | Tells git to ignore the local config | ✅ |
+| `config.example.js` | Local config (your key) — gitignored as a safety net | ❌ |
+| `config.local.js` | Local config (your key) — gitignored | ❌ |
+| `.gitignore` | Tells git to ignore the config files | ✅ |
 | `SaasFinancialDashboard.jsx` | The original React-component version (no CDN) | ✅ |
+| `tests/calc.test.mjs` | Unit tests for formatters and KPI math | ✅ |
+
+## Tests
+
+97 unit tests covering every formatter, KPI calculation, projection series, and chart-insight derivation across edge cases (Infinity, zero-divide, hyper-growth, death-spiral, already-past-milestone).
+
+```bash
+# With Node:
+node tests/calc.test.mjs
+
+# Or with macOS's built-in JavaScriptCore (no install needed):
+/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc tests/calc.test.mjs
+```
+
+If you change a calculation in `dashboard.html`, mirror the change in `tests/calc.test.mjs` so the tests stay aligned.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Free to use, modify, and distribute. No warranty.
 
 ## Stack
 

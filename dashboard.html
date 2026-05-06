@@ -74,7 +74,6 @@
         import('https://esm.sh/marked@12.0.2'),
       ]);
       window.React = React.default;
-      Object.assign(window.React, React);
       window.ReactDOMClient = ReactDOMClient;
       window.Recharts = Recharts;
       window.marked = MarkedMod.marked || MarkedMod.default || MarkedMod;
@@ -127,6 +126,7 @@
         ResponsiveContainer, ReferenceLine, Cell,
       } = Recharts;
       const marked = window.marked;
+      if (marked && marked.setOptions) marked.setOptions({ gfm: true, breaks: true });
 
       /* ---------- icons ---------- */
       const Svg = ({ size = 16, className = '', children }) => (
@@ -217,9 +217,11 @@
             </div>
             <div className="flex items-center gap-2">
               <input type="range" min={min} max={max} step={step} value={value}
+                     aria-label={label + ' slider'}
                      onChange={(e) => onChange(clamp(+e.target.value))}
                      className="flex-1 brand-slider cursor-pointer" />
               <input type="number" min={min} max={max} step={step} value={draft}
+                     aria-label={label + ' value'}
                      onChange={(e) => setDraft(e.target.value)}
                      onBlur={commit}
                      onKeyDown={(e) => { if (e.key === 'Enter') { commit(); e.target.blur(); } }}
@@ -407,7 +409,6 @@
       /* ---------- markdown → styled HTML ---------- */
       const renderReportHtml = (text) => {
         if (!text) return '';
-        marked.setOptions({ gfm: true, breaks: true });
         let html = marked.parse(text);
         html = html.replace(
           /<h([1-3])>([^<]*?\bStrengths\b[^<]*?)<\/h\1>/gi,
@@ -635,7 +636,7 @@
             + ' vs best-in-class benchmark ' + (bench != null ? bench.toFixed(1) + '%' : 'n/a')
             + ' (gap: ' + gap + ')',
           '',
-          'Write a sharp, specific financial assessment using all of the above. In the Chart Analysis section, reference these projection numbers explicitly.',
+          'Write a sharp, specific financial assessment using all of the above. Use the chart projection numbers (ARR milestones, cash break-even, retention gap) to ground your Strengths, Red Flags, Recommendations, and Fundraising Readiness sections.',
         ].join('\n');
       }
 
