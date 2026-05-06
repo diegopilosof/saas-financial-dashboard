@@ -1,0 +1,1078 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SaaS Financial Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html, body, #root { height: 100%; }
+    body {
+      background: #d1fae5;
+      color: #0f172a;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+    }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+    input[type=range] { height: 6px; }
+    .loader {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      color: #475569; font-size: 14px; gap: 10px;
+    }
+    .spinner {
+      width: 18px; height: 18px; border: 2px solid #e2e8f0; border-top-color: #0f172a;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    .spinner-lg {
+      width: 32px; height: 32px; border: 3px solid #e2e8f0; border-top-color: #0f172a;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .err {
+      padding: 2rem; color: #b91c1c; font-family: ui-monospace, Menlo, monospace;
+      white-space: pre-wrap; font-size: 12px;
+    }
+    /* Markdown styling for report (light theme) */
+    .report-md h1, .report-md h2, .report-md h3 {
+      font-weight: 700; color: #0f172a; margin-top: 1.25rem; margin-bottom: 0.5rem; font-size: 1rem;
+    }
+    .report-md h1 { font-size: 1.125rem; }
+    .report-md h2.section-strengths { color: #059669; }
+    .report-md h2.section-redflags { color: #e11d48; }
+    .report-md p { color: #334155; font-size: 0.875rem; line-height: 1.6; margin: 0.5rem 0; }
+    .report-md ul { list-style: disc; padding-left: 1.25rem; margin: 0.5rem 0; }
+    .report-md ol { list-style: decimal; padding-left: 1.25rem; margin: 0.5rem 0; }
+    .report-md li { color: #334155; font-size: 0.875rem; margin: 0.25rem 0; line-height: 1.5; }
+    .report-md strong { color: #0f172a; font-weight: 600; }
+    .report-md em { color: #475569; }
+    .report-md code { background: #f1f5f9; color: #0f172a; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.8rem; }
+    .report-md hr { border-color: #e2e8f0; margin: 1rem 0; }
+    .report-md a { color: #0f172a; text-decoration: underline; text-decoration-color: #bef264; text-decoration-thickness: 2px; }
+    @keyframes slide-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+    .slide-in { animation: slide-in 0.25s ease-out; }
+    /* Custom slider thumb for the bright accent */
+    input[type=range].brand-slider { accent-color: #0f172a; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div class="loader"><div class="spinner"></div><span>Loading dashboard…</span></div>
+  </div>
+
+  <script type="module">
+    const showError = (msg) => {
+      document.getElementById('root').innerHTML =
+        '<div class="err">Failed to load:\n' + msg + '\n\nIf you are offline, this dashboard needs an internet connection on first load.</div>';
+    };
+    try {
+      const [React, ReactDOMClient, Recharts, MarkedMod] = await Promise.all([
+        import('https://esm.sh/react@18.3.1'),
+        import('https://esm.sh/react-dom@18.3.1/client'),
+        import('https://esm.sh/recharts@2.12.7?deps=react@18.3.1,react-dom@18.3.1'),
+        import('https://esm.sh/marked@12.0.2'),
+      ]);
+      window.React = React.default;
+      Object.assign(window.React, React);
+      window.ReactDOMClient = ReactDOMClient;
+      window.Recharts = Recharts;
+      window.marked = MarkedMod.marked || MarkedMod.default || MarkedMod;
+      window.__libsReady = true;
+      window.dispatchEvent(new Event('libs-ready'));
+    } catch (e) {
+      showError(e && (e.stack || e.message) || String(e));
+    }
+    window.addEventListener('error', (ev) => console.error(ev.error || ev.message));
+  </script>
+
+  <!-- Optional local config — sets window.ANTHROPIC_API_KEY. Gitignored. -->
+  <!-- A 404 here is fine; the modal still works as a fallback. -->
+  <script src="config.local.js" onerror="void 0"></script>
+
+  <script src="https://unpkg.com/@babel/standalone@7.24.4/babel.min.js"></script>
+
+  <script type="text/babel" data-presets="react">
+    (function boot() {
+      if (!window.__libsReady) {
+        window.addEventListener('libs-ready', boot, { once: true });
+        return;
+      }
+      try { run(); }
+      catch (e) {
+        document.getElementById('root').innerHTML =
+          '<div class="err">App error:\n' + (e && (e.stack || e.message) || String(e)) + '</div>';
+        console.error(e);
+      }
+    })();
+
+    function run() {
+      /* ====================================================================
+       * API KEY — loaded from config.local.js (gitignored).
+       *
+       *   1. Copy config.example.js to config.local.js (same folder).
+       *   2. Paste your key into config.local.js.
+       *   3. Done — the key is never written into this file.
+       *
+       * Without config.local.js the modal still works as a fallback.
+       * To rotate or revoke: console.anthropic.com → Settings → API Keys.
+       * ==================================================================== */
+      const HARDCODED_API_KEY =
+        (typeof window !== 'undefined' && window.ANTHROPIC_API_KEY) || '';
+
+      const { useState, useMemo, useEffect } = React;
+      const {
+        LineChart, Line, AreaChart, Area, BarChart, Bar, ComposedChart,
+        XAxis, YAxis, CartesianGrid, Tooltip: RTooltip, Legend,
+        ResponsiveContainer, ReferenceLine, Cell,
+      } = Recharts;
+      const marked = window.marked;
+
+      /* ---------- icons ---------- */
+      const Svg = ({ size = 16, className = '', children }) => (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+             strokeLinejoin="round" className={className}>{children}</svg>
+      );
+      const Info = (p) => <Svg {...p}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></Svg>;
+      const TrendingUp = (p) => <Svg {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></Svg>;
+      const DollarSign = (p) => <Svg {...p}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></Svg>;
+      const Users = (p) => <Svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></Svg>;
+      const Activity = (p) => <Svg {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></Svg>;
+      const Flame = (p) => <Svg {...p}><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></Svg>;
+      const Wallet = (p) => <Svg {...p}><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></Svg>;
+      const BarChart3 = (p) => <Svg {...p}><path d="M3 3v18h18"/><path d="M8 17V9"/><path d="M13 17V5"/><path d="M18 17v-3"/></Svg>;
+      const Target = (p) => <Svg {...p}><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></Svg>;
+      const Calendar = (p) => <Svg {...p}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></Svg>;
+      const Zap = (p) => <Svg {...p}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></Svg>;
+      const Repeat = (p) => <Svg {...p}><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></Svg>;
+      const Sparkles = (p) => <Svg {...p}><path d="M12 3l1.9 5.8L20 11l-5.8 1.9L12 19l-1.9-6.1L4 11l5.8-1.9z"/></Svg>;
+      const X = (p) => <Svg {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Svg>;
+      const Copy = (p) => <Svg {...p}><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></Svg>;
+      const Check = (p) => <Svg {...p}><polyline points="20 6 9 17 4 12"/></Svg>;
+      const HelpCircle = (p) => <Svg {...p}><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></Svg>;
+
+      /* ---------- formatting ---------- */
+      const formatCurrency = (val) => {
+        if (val === null || val === undefined || Number.isNaN(val)) return '–';
+        if (!Number.isFinite(val)) return '∞';
+        const v = Math.abs(val);
+        const sign = val < 0 ? '-' : '';
+        if (v >= 1e9) return sign + '$' + (v / 1e9).toFixed(1) + 'B';
+        if (v >= 1e6) return sign + '$' + (v / 1e6).toFixed(2) + 'M';
+        if (v >= 1e3) return sign + '$' + (v / 1e3).toFixed(0) + 'K';
+        return sign + '$' + Math.round(v);
+      };
+      const formatPercent = (val) => Number.isFinite(val) ? val.toFixed(1) + '%' : '–';
+      const formatMonths = (val) => {
+        if (!Number.isFinite(val)) return '∞';
+        if (val > 240) return '20+ yrs';
+        return val.toFixed(1) + ' mo';
+      };
+      const formatNumber = (val, dp) => Number.isFinite(val) ? val.toFixed(dp == null ? 2 : dp) : '–';
+      const monthAxisLabel = (offset) => {
+        const d = new Date(); d.setDate(1);
+        d.setMonth(d.getMonth() + offset);
+        return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+      };
+      const fullDate = (offset) => {
+        const d = new Date(); d.setDate(1);
+        d.setMonth(d.getMonth() + offset);
+        return d.toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      };
+
+      /* ---------- pure-CSS hover tooltip ---------- */
+      const HoverTip = ({ children, className = '' }) => (
+        <div role="tooltip" className={
+          'pointer-events-none invisible opacity-0 group-hover:visible group-hover:opacity-100 ' +
+          'transition-opacity duration-150 absolute z-50 bg-slate-900 text-white text-xs ' +
+          'leading-relaxed rounded-2xl p-3 shadow-2xl ring-1 ring-black/40 max-w-xs w-64 ' + className
+        }>{children}</div>
+      );
+
+      const SliderInput = ({ label, icon: Icon, value, onChange, min, max, step, format, tooltip }) => {
+        const clamp = (v) => Math.min(max, Math.max(min, Number.isFinite(v) ? v : min));
+        const [draft, setDraft] = useState(String(value));
+        useEffect(() => { setDraft(String(value)); }, [value]);
+        const commit = () => {
+          const n = +draft;
+          if (Number.isFinite(n)) {
+            const v = clamp(n);
+            onChange(v);
+            setDraft(String(v));
+          } else {
+            setDraft(String(value));
+          }
+        };
+        return (
+          <div className="mb-4 relative hover:z-50">
+            <div className="flex justify-between items-center mb-1.5">
+              <div className="group relative inline-flex items-center gap-1.5 cursor-help">
+                {Icon && <Icon size={14} className="text-slate-500" />}
+                <span className="text-xs font-medium text-slate-700 uppercase tracking-wider">{label}</span>
+                <Info size={12} className="text-slate-400" />
+                <HoverTip className="left-0 top-full mt-1.5">{tooltip}</HoverTip>
+              </div>
+              <span className="text-sm font-mono font-bold text-slate-900">{format(value)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <input type="range" min={min} max={max} step={step} value={value}
+                     onChange={(e) => onChange(clamp(+e.target.value))}
+                     className="flex-1 brand-slider cursor-pointer" />
+              <input type="number" min={min} max={max} step={step} value={draft}
+                     onChange={(e) => setDraft(e.target.value)}
+                     onBlur={commit}
+                     onKeyDown={(e) => { if (e.key === 'Enter') { commit(); e.target.blur(); } }}
+                     className="w-24 bg-slate-50 border border-slate-200 text-slate-900 px-2 py-1 rounded-lg text-xs font-mono focus:border-slate-900 focus:outline-none" />
+            </div>
+          </div>
+        );
+      };
+
+      const KpiCard = ({ icon: Icon, label, value, subtext, status = 'neutral', tooltip, highlight = false }) => {
+        const border = { green:'border-l-emerald-500', yellow:'border-l-amber-500', red:'border-l-rose-500', neutral:'border-l-slate-900' }[status];
+        const subColor = { green:'text-emerald-700', yellow:'text-amber-700', red:'text-rose-700', neutral:'text-slate-500' }[status];
+        const bg = highlight ? 'bg-lime-300' : 'bg-white';
+        return (
+          <div className={'group relative ' + bg + ' rounded-2xl p-4 shadow-md border-l-4 ' + border + ' hover:shadow-xl transition-all cursor-help hover:z-50'}>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              {Icon && <Icon size={13} className="text-slate-700" />}
+              <span className="text-[10px] text-slate-600 uppercase tracking-widest font-semibold">{label}</span>
+              <Info size={11} className="text-slate-400 ml-auto" />
+            </div>
+            <div className="text-2xl font-bold text-slate-900 tracking-tight">{value}</div>
+            {subtext && <div className={'text-[11px] mt-1 ' + subColor}>{subtext}</div>}
+            <HoverTip className="left-0 top-full mt-2">{tooltip}</HoverTip>
+          </div>
+        );
+      };
+
+      const ChartCard = ({ title, subtitle, children, insights, tooltip }) => (
+        <div className="bg-white rounded-2xl p-4 shadow-md flex flex-col relative">
+          <div className="mb-3">
+            <div className="flex items-center gap-1.5">
+              <h3 className="text-sm font-bold text-slate-900">{title}</h3>
+              {tooltip && (
+                <div className="group relative inline-flex items-center cursor-help">
+                  <Info size={13} className="text-slate-400 hover:text-slate-700 transition-colors" />
+                  <HoverTip className="left-0 top-full mt-1.5">{tooltip}</HoverTip>
+                </div>
+              )}
+            </div>
+            {subtitle && <p className="text-[11px] text-slate-500 mt-0.5">{subtitle}</p>}
+          </div>
+          <div className="h-72">{children}</div>
+          {insights && insights.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5">
+              {insights.map((item, i) => (
+                <div key={i} className="flex items-start gap-2 text-[11px] text-slate-700 leading-snug">
+                  <span className="text-lime-600 mt-[3px] text-[8px]">●</span>
+                  <span>{item}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+
+      const RechartsTooltip = ({ active, payload, label, valueFormatter, labelFormatter }) => {
+        if (!active || !payload || !payload.length) return null;
+        return (
+          <div className="bg-white text-slate-900 text-xs rounded-xl p-3 shadow-xl ring-1 ring-slate-200">
+            <div className="font-semibold mb-1.5 text-slate-900">{labelFormatter ? labelFormatter(label) : label}</div>
+            {payload.map((p, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full" style={{ background: p.color || p.fill }} />
+                <span className="text-slate-600">{p.name}:</span>
+                <span className="font-mono font-semibold ml-auto pl-3 text-slate-900">{valueFormatter ? valueFormatter(p.value) : p.value}</span>
+              </div>
+            ))}
+          </div>
+        );
+      };
+
+      /* ---------- modal pieces ---------- */
+      const ButtonGroup = ({ options, value, onChange }) => (
+        <div className="flex flex-wrap gap-2">
+          {options.map(opt => (
+            <button key={opt} type="button"
+              onClick={() => onChange(value === opt ? '' : opt)}
+              className={'px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ' + (
+                value === opt
+                  ? 'bg-slate-900 text-lime-300 border-slate-900 shadow-md'
+                  : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 hover:text-slate-900'
+              )}>{opt}</button>
+          ))}
+        </div>
+      );
+
+      const Question = ({ label, children }) => (
+        <div className="mb-5">
+          <label className="block text-sm font-medium text-slate-800 mb-2">{label}</label>
+          {children}
+        </div>
+      );
+
+      const ContextModal = ({ open, onClose, onSubmit, initialKey }) => {
+        const [apiKey, setApiKey] = useState(initialKey || '');
+        const [product, setProduct] = useState('');
+        const [customerType, setCustomerType] = useState('');
+        const [stage, setStage] = useState('');
+        const [channel, setChannel] = useState('');
+        const [fundraising, setFundraising] = useState('');
+        const [keyError, setKeyError] = useState('');
+
+        useEffect(() => {
+          if (!open) return;
+          const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+          document.addEventListener('keydown', onKey);
+          return () => document.removeEventListener('keydown', onKey);
+        }, [open, onClose]);
+
+        useEffect(() => {
+          if (open) setApiKey(initialKey || '');
+        }, [open, initialKey]);
+
+        if (!open) return null;
+        const submit = () => {
+          if (!apiKey || !/^sk-ant-/.test(apiKey)) {
+            setKeyError('A valid Anthropic API key is required (must start with "sk-ant-").');
+            return;
+          }
+          onSubmit({ apiKey, product, customerType, stage, channel, fundraising });
+        };
+
+        return (
+          <div className="fixed inset-0 z-[100] bg-slate-900/50 flex items-center justify-center p-4 overflow-y-auto"
+               onClick={onClose}>
+            <div className="bg-white rounded-3xl shadow-2xl ring-1 ring-slate-200 max-w-2xl w-full p-6 my-8 slide-in"
+                 onClick={(e) => e.stopPropagation()}>
+              <div className="flex justify-between items-start mb-1">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={18} className="text-slate-900" />
+                  <h2 className="text-lg font-bold text-slate-900">Tell us about your company</h2>
+                </div>
+                <button onClick={onClose} className="text-slate-500 hover:text-slate-900 p-1 rounded-full hover:bg-slate-100">
+                  <X size={18}/>
+                </button>
+              </div>
+              <p className="text-xs text-slate-500 mb-5">Helps personalize the analysis. All questions optional but the more answered, the sharper the report.</p>
+
+              <Question label="Anthropic API key (stored only in your browser)">
+                <input type="password" value={apiKey}
+                  onChange={(e) => { setApiKey(e.target.value); setKeyError(''); }}
+                  placeholder="sk-ant-..."
+                  className="w-full bg-slate-50 border border-slate-200 text-slate-900 px-3 py-2 rounded-xl text-sm font-mono focus:border-slate-900 focus:outline-none" />
+                {keyError && <p className="text-xs text-rose-600 mt-1">{keyError}</p>}
+                <p className="text-[11px] text-slate-500 mt-1">Get one at console.anthropic.com → API Keys. Saved in localStorage on this device only.</p>
+              </Question>
+
+              <Question label="What does your product do and who are your customers?">
+                <input type="text" value={product} onChange={(e) => setProduct(e.target.value)}
+                  placeholder="e.g. Payroll software for SMBs in Latin America"
+                  className="w-full bg-slate-50 border border-slate-200 text-slate-900 px-3 py-2 rounded-xl text-sm focus:border-slate-900 focus:outline-none" />
+              </Question>
+
+              <Question label="Customer type">
+                <ButtonGroup options={['B2C', 'B2B SMB', 'B2B Mid-Market', 'B2B Enterprise']} value={customerType} onChange={setCustomerType} />
+              </Question>
+
+              <Question label="Company stage">
+                <ButtonGroup options={['Pre-revenue', 'Pre-seed', 'Seed', 'Series A', 'Series B+']} value={stage} onChange={setStage} />
+              </Question>
+
+              <Question label="Primary acquisition channel">
+                <ButtonGroup options={['Inbound', 'Outbound', 'PLG', 'Partners', 'Mixed']} value={channel} onChange={setChannel} />
+              </Question>
+
+              <Question label="Planning to raise capital?">
+                <ButtonGroup options={['Yes, actively', 'In 6–12 months', 'Not now', 'Well-funded']} value={fundraising} onChange={setFundraising} />
+              </Question>
+
+              <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-slate-200">
+                <button onClick={onClose}
+                  className="px-4 py-2 rounded-full text-sm font-medium text-slate-600 hover:bg-slate-100">
+                  Cancel
+                </button>
+                <button onClick={submit}
+                  className="px-5 py-2 rounded-full text-sm font-semibold bg-slate-900 text-lime-300 hover:bg-slate-800 shadow-lg">
+                  Generate Report →
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      /* ---------- markdown → styled HTML ---------- */
+      const renderReportHtml = (text) => {
+        if (!text) return '';
+        marked.setOptions({ gfm: true, breaks: true });
+        let html = marked.parse(text);
+        html = html.replace(
+          /<h([1-3])>([^<]*?\bStrengths\b[^<]*?)<\/h\1>/gi,
+          '<h$1 class="section-strengths">$2</h$1>'
+        );
+        html = html.replace(
+          /<h([1-3])>([^<]*?\bRed Flags?\b[^<]*?)<\/h\1>/gi,
+          '<h$1 class="section-redflags">$2</h$1>'
+        );
+        return html;
+      };
+
+      const ReportPanel = ({ markdown, onClose }) => {
+        const [copied, setCopied] = useState(false);
+        const html = useMemo(() => renderReportHtml(markdown), [markdown]);
+        const handleCopy = async () => {
+          try {
+            await navigator.clipboard.writeText(markdown);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          } catch (e) {
+            console.error(e);
+          }
+        };
+        return (
+          <div className="bg-white rounded-2xl shadow-md ring-1 ring-slate-200 p-6 relative slide-in">
+            <div className="absolute top-4 right-4 flex gap-2">
+              <button onClick={handleCopy}
+                className={'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ' + (
+                  copied ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                )}>
+                {copied ? <><Check size={12}/> Copied!</> : <><Copy size={12}/> Copy Report</>}
+              </button>
+              <button onClick={onClose}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700 hover:bg-rose-100 hover:text-rose-700 transition-colors">
+                <X size={12}/> Close
+              </button>
+            </div>
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles size={16} className="text-slate-900" />
+              <h2 className="text-base font-bold text-slate-900">AI-Generated Financial Assessment</h2>
+            </div>
+            <div className="report-md max-w-none pr-32" dangerouslySetInnerHTML={{ __html: html }} />
+          </div>
+        );
+      };
+
+      const LoadingPanel = () => (
+        <div className="bg-white rounded-2xl shadow-md ring-1 ring-slate-200 p-8 flex items-center justify-center gap-4 slide-in">
+          <div className="spinner-lg"></div>
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Analyzing your metrics…</div>
+            <div className="text-xs text-slate-500 mt-0.5">Claude is working through unit economics, runway, and growth signals</div>
+          </div>
+        </div>
+      );
+
+      const ErrorPanel = ({ message, onClose }) => (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex items-start justify-between gap-4 slide-in">
+          <div>
+            <div className="text-sm font-semibold text-rose-700 mb-1">Report generation failed</div>
+            <div className="text-xs text-rose-600 font-mono whitespace-pre-wrap">{message}</div>
+          </div>
+          <button onClick={onClose} className="text-rose-600 hover:text-rose-900 p-1"><X size={14}/></button>
+        </div>
+      );
+
+      const HelpModal = ({ open, onClose }) => {
+        useEffect(() => {
+          if (!open) return;
+          const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+          document.addEventListener('keydown', onKey);
+          return () => document.removeEventListener('keydown', onKey);
+        }, [open, onClose]);
+        if (!open) return null;
+        return (
+          <div className="fixed inset-0 z-[100] bg-slate-900/50 flex items-center justify-center p-4 overflow-y-auto" onClick={onClose}>
+            <div className="bg-white rounded-3xl shadow-2xl ring-1 ring-slate-200 max-w-2xl w-full p-6 my-8 slide-in" onClick={(e) => e.stopPropagation()}>
+              <div className="flex justify-between items-start mb-5">
+                <div className="flex items-center gap-2">
+                  <HelpCircle size={20} className="text-slate-900" />
+                  <h2 className="text-lg font-bold text-slate-900">How to use this dashboard</h2>
+                </div>
+                <button onClick={onClose} className="text-slate-500 hover:text-slate-900 p-1 rounded-full hover:bg-slate-100">
+                  <X size={18}/>
+                </button>
+              </div>
+
+              <div className="space-y-5">
+                <section>
+                  <h3 className="text-sm font-bold text-slate-900 mb-1.5">1. What is this?</h3>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    A live SaaS financial model. Move the sliders on the left to change MRR, growth, churn, burn, etc. — every KPI, chart, and insight updates instantly. No login, no spreadsheet, no math.
+                  </p>
+                </section>
+
+                <section>
+                  <h3 className="text-sm font-bold text-slate-900 mb-1.5">2. Adjust the inputs (left panel)</h3>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    Drag a slider or type into the box next to it. Hover the small ℹ️ next to any label for a plain-English explanation of what the metric is and where to find it in your billing tool or P&amp;L.
+                  </p>
+                </section>
+
+                <section>
+                  <h3 className="text-sm font-bold text-slate-900 mb-1.5">3. Read the KPI cards (top)</h3>
+                  <p className="text-sm text-slate-600 leading-relaxed mb-2">
+                    Eight key SaaS metrics, color-coded by health:
+                  </p>
+                  <ul className="text-sm text-slate-600 list-disc pl-5 space-y-1">
+                    <li><span className="text-emerald-600 font-semibold">Green</span> — healthy, on track.</li>
+                    <li><span className="text-amber-600 font-semibold">Yellow</span> — caution, worth monitoring.</li>
+                    <li><span className="text-rose-600 font-semibold">Red</span> — needs immediate attention.</li>
+                  </ul>
+                  <p className="text-sm text-slate-600 mt-2">Hover any card for the formula and benchmarks.</p>
+                </section>
+
+                <section>
+                  <h3 className="text-sm font-bold text-slate-900 mb-1.5">4. Read the charts</h3>
+                  <ul className="text-sm text-slate-600 list-disc pl-5 space-y-1.5">
+                    <li><strong className="text-slate-900">MRR Growth Projection</strong> — three trajectories (optimistic, base, pessimistic) with markers at $1M and $10M ARR.</li>
+                    <li><strong className="text-slate-900">Cash Runway</strong> — cash over time using dynamic burn (MRR offsets OPEX). Red zone marks &lt;3 months of burn left; the dashed line marks zero-cash month.</li>
+                    <li><strong className="text-slate-900">Unit Economics</strong> — CAC vs Gross Profit per customer vs LTV. The bigger LTV is over CAC, the healthier your acquisition spend.</li>
+                    <li><strong className="text-slate-900">Cohort Retention</strong> — your monthly retention curve vs a best-in-class 0.4% churn benchmark. The red fill is the gap.</li>
+                  </ul>
+                  <p className="text-sm text-slate-600 mt-2">Each chart has <strong className="text-slate-900">live computed insights</strong> below it that update with the sliders.</p>
+                </section>
+
+                <section>
+                  <h3 className="text-sm font-bold text-slate-900 mb-1.5">5. Generate an AI report</h3>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    Click the black <strong className="text-slate-900">✨ Generate Report</strong> button below the KPIs. Answer a few optional context questions (industry, stage, fundraising plans). Claude writes a CFO-style assessment with strengths, red flags, recommendations, and fundraising readiness. Requires an Anthropic API key — see the README.
+                  </p>
+                </section>
+              </div>
+
+              <div className="flex justify-end pt-5 border-t border-slate-200 mt-6">
+                <button onClick={onClose} className="px-5 py-2 rounded-full text-sm font-semibold bg-slate-900 text-lime-300 hover:bg-slate-800 shadow-lg">
+                  Got it
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      /* ---------- API call ---------- */
+      const SYSTEM_PROMPT = "You are a senior SaaS CFO advisor and venture capital analyst. You write sharp, direct, investor-ready financial assessments. Be specific — always reference the actual numbers provided. Never be generic. Structure your response in clean markdown with these exact sections:\n\nExecutive Summary\nStrengths 💚\nRed Flags 🔴\nKey Recommendations\nFundraising Readiness\n\nUse the projection numbers (months to ARR milestones, cash break-even, danger-zone month, retention gap) to ground your recommendations. Each section: 2–4 bullets max. Be honest, not diplomatic.";
+
+      async function callClaude(apiKey, userMessage) {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-6',
+            max_tokens: 1000,
+            system: SYSTEM_PROMPT,
+            messages: [{ role: 'user', content: userMessage }],
+          }),
+        });
+        if (!res.ok) {
+          const txt = await res.text();
+          let parsed;
+          try { parsed = JSON.parse(txt); } catch { parsed = null; }
+          const msg = parsed && parsed.error && parsed.error.message ? parsed.error.message : txt;
+          throw new Error('HTTP ' + res.status + ': ' + msg);
+        }
+        const data = await res.json();
+        const block = (data.content || []).find(c => c.type === 'text');
+        return block ? block.text : '';
+      }
+
+      function buildUserMessage(ctx, kpis, insights, mrr, momGrowth, expansionRate, churn, cac, grossMargin, burn, cash, arpa) {
+        const v = (x) => x && x.length ? x : 'Not specified';
+        const monthOrNever = (m) => m == null ? 'never within projection horizon' : 'month ' + m;
+        const arrLine = (m) => m == null ? 'unreachable at current growth rate'
+                              : m === 0 ? 'already past this milestone'
+                              : m + ' months';
+        const ret = insights.retentionAt12;
+        const bench = insights.benchmarkAt12;
+        const gap = (ret != null && bench != null) ? (bench - ret).toFixed(1) + ' pp' : 'n/a';
+        return [
+          'Analyze this SaaS company:',
+          '',
+          'COMPANY CONTEXT:',
+          '- Product & customers: ' + v(ctx.product),
+          '- Customer type: ' + v(ctx.customerType),
+          '- Stage: ' + v(ctx.stage),
+          '- Acquisition: ' + v(ctx.channel),
+          '- Fundraising plans: ' + v(ctx.fundraising),
+          '',
+          'FINANCIAL METRICS:',
+          '- MRR: ' + formatCurrency(mrr),
+          '- ARR: ' + formatCurrency(kpis.arr),
+          '- MoM Growth Rate: ' + momGrowth + '%',
+          '- Expansion MRR Rate: ' + expansionRate + '%',
+          '- Monthly Churn: ' + churn + '%',
+          '- CAC: ' + formatCurrency(cac),
+          '- Gross Margin: ' + grossMargin + '%',
+          '- Monthly Burn Rate: ' + formatCurrency(burn),
+          '- Cash in Bank: ' + formatCurrency(cash),
+          '- ARPA: ' + formatCurrency(arpa),
+          '- LTV: ' + formatCurrency(kpis.ltv),
+          '- LTV:CAC Ratio: ' + (Number.isFinite(kpis.ltvCac) ? kpis.ltvCac.toFixed(2) : '∞'),
+          '- CAC Payback Period: ' + formatMonths(kpis.cacPayback),
+          '- Runway: ' + formatMonths(kpis.runway),
+          '- NRR estimate: ' + formatPercent(kpis.nrr),
+          '- Estimated Magic Number: ' + formatNumber(kpis.magic),
+          '- Projected Zero-Cash Date: ' + kpis.zeroCashDate,
+          '',
+          'CHART INSIGHTS (derived from the live projections):',
+          '- MRR Growth Projection (base case): month 12 = ' + formatCurrency(insights.mrrMonth12)
+            + ', month 24 = ' + formatCurrency(insights.mrrMonth24)
+            + ', month 36 = ' + formatCurrency(insights.mrrMonth36),
+          '- Months to $1M ARR: ' + arrLine(insights.monthsTo1MARR),
+          '- Months to $10M ARR: ' + arrLine(insights.monthsTo10MARR),
+          '- Cash Runway chart: cash enters the <3-months-burn danger zone at ' + monthOrNever(insights.firstDangerMonth)
+            + '; zero-cash at ' + monthOrNever(insights.zeroCashMonth)
+            + '; MRR catches up to OPEX (cash-flow break-even) at ' + monthOrNever(insights.breakEvenMonth),
+          '- Cohort Retention (Month 12): yours = ' + (ret != null ? ret.toFixed(1) + '%' : 'n/a')
+            + ' vs best-in-class benchmark ' + (bench != null ? bench.toFixed(1) + '%' : 'n/a')
+            + ' (gap: ' + gap + ')',
+          '',
+          'Write a sharp, specific financial assessment using all of the above. In the Chart Analysis section, reference these projection numbers explicitly.',
+        ].join('\n');
+      }
+
+      /* ---------- main app ---------- */
+      function SaasFinancialDashboard() {
+        const [mrr, setMrr] = useState(45000);
+        const [momGrowth, setMomGrowth] = useState(8);
+        const [expansionRate, setExpansionRate] = useState(3.5);
+        const [churn, setChurn] = useState(2.5);
+        const [cac, setCac] = useState(1200);
+        const [grossMargin, setGrossMargin] = useState(72);
+        const [burn, setBurn] = useState(85000);
+        const [cash, setCash] = useState(1200000);
+        const [arpa, setArpa] = useState(450);
+
+        const [modalOpen, setModalOpen] = useState(false);
+        const [helpOpen, setHelpOpen] = useState(false);
+        const [reportLoading, setReportLoading] = useState(false);
+        const [report, setReport] = useState('');
+        const [reportError, setReportError] = useState('');
+        const [savedKey, setSavedKey] = useState(() => {
+          try { return localStorage.getItem('anthropic-api-key') || HARDCODED_API_KEY || ''; }
+          catch { return HARDCODED_API_KEY || ''; }
+        });
+
+        const kpis = useMemo(() => {
+          const arr = mrr * 12;
+          const gmDec = grossMargin / 100;
+          const churnDec = churn / 100;
+          const ltv = churnDec > 0 ? (arpa * gmDec) / churnDec : Infinity;
+          const ltvCac = cac > 0 ? ltv / cac : Infinity;
+          const grossProfitPerCust = arpa * gmDec;
+          const cacPayback = grossProfitPerCust > 0 ? cac / grossProfitPerCust : Infinity;
+          const runway = burn > 0 ? cash / burn : Infinity;
+          const nrr = 100 + expansionRate - churn;
+          const sm = burn * 0.4;
+          const magic = sm > 0 ? (mrr * (momGrowth / 100) * 12) / sm : 0;
+          const zeroCashOffset = Number.isFinite(runway) ? Math.round(runway) : 0;
+          const zeroCashDate = Number.isFinite(runway) ? monthAxisLabel(zeroCashOffset) : 'Cash positive';
+          return { arr, ltv, ltvCac, cacPayback, runway, nrr, magic, zeroCashDate, grossProfitPerCust };
+        }, [mrr, momGrowth, expansionRate, churn, cac, grossMargin, burn, cash, arpa]);
+
+        const horizon = useMemo(() => {
+          const r = Number.isFinite(kpis.runway) ? Math.ceil(kpis.runway) : 36;
+          return Math.min(120, Math.max(36, r));
+        }, [kpis.runway]);
+
+        const mrrSeries = useMemo(() => {
+          const base = momGrowth / 100, opt = base * 1.2, pess = base * 0.7;
+          const out = [];
+          for (let i = 0; i <= horizon; i++) {
+            out.push({
+              month: i,
+              base: mrr * Math.pow(1 + base, i),
+              optimistic: mrr * Math.pow(1 + opt, i),
+              pessimistic: mrr * Math.pow(1 + pess, i),
+            });
+          }
+          return out;
+        }, [mrr, momGrowth, horizon]);
+
+        const cashSeries = useMemo(() => {
+          const opex = mrr + burn;
+          const base = momGrowth / 100;
+          const dangerThreshold = burn * 3;
+          let c = cash, zeroAt = null;
+          const rows = [{ month: 0, cash: c, danger: null }];
+          for (let i = 1; i <= horizon; i++) {
+            const projMrr = mrr * Math.pow(1 + base, i);
+            const netBurn = opex - projMrr;
+            c = c - netBurn;
+            const inDanger = c > 0 && c < dangerThreshold;
+            if (zeroAt === null && c <= 0) zeroAt = i;
+            rows.push({
+              month: i,
+              cash: Math.max(c, 0),
+              danger: inDanger ? Math.max(c, 0) : null,
+            });
+          }
+          return { rows, zeroAt };
+        }, [mrr, burn, cash, momGrowth, horizon]);
+
+        const unitEconSeries = useMemo(() => {
+          const cappedLtv = Number.isFinite(kpis.ltv) ? Math.min(kpis.ltv, cac * 50) : cac * 50;
+          return [
+            { name: 'CAC', value: cac, fill: '#f43f5e' },
+            { name: 'Gross Profit / Cust', value: kpis.grossProfitPerCust, fill: '#f59e0b' },
+            { name: 'LTV', value: cappedLtv, fill: '#10b981' },
+          ];
+        }, [cac, kpis.ltv, kpis.grossProfitPerCust]);
+
+        const retentionSeries = useMemo(() => {
+          const yourChurn = churn / 100;
+          const benchChurn = 0.004;
+          const out = [];
+          for (let i = 0; i < 13; i++) {
+            const yours = Math.pow(1 - yourChurn, i) * 100;
+            const bench = Math.pow(1 - benchChurn, i) * 100;
+            out.push({ month: i, yours, benchmark: bench, gap: Math.max(0, bench - yours) });
+          }
+          return out;
+        }, [churn]);
+
+        const chartInsights = useMemo(() => {
+          const g = momGrowth / 100;
+          const opex = mrr + burn;
+          const currentARR = mrr * 12;
+          const mrrAt = (t) => mrr * Math.pow(1 + g, t);
+          const monthsToARR = (target) => {
+            if (currentARR >= target) return 0;
+            if (g <= 0 || mrr <= 0) return null;
+            return Math.ceil(Math.log((target / 12) / mrr) / Math.log(1 + g));
+          };
+          const breakEven = (() => {
+            if (g <= 0 || mrr <= 0) return null;
+            return Math.ceil(Math.log(opex / mrr) / Math.log(1 + g));
+          })();
+          const dangerRow = cashSeries.rows.find(r => r.danger !== null);
+          const r12 = retentionSeries[12];
+          return {
+            mrrMonth12: mrrAt(12),
+            mrrMonth24: mrrAt(24),
+            mrrMonth36: mrrAt(36),
+            monthsTo1MARR: monthsToARR(1000000),
+            monthsTo10MARR: monthsToARR(10000000),
+            breakEvenMonth: breakEven,
+            firstDangerMonth: dangerRow ? dangerRow.month : null,
+            zeroCashMonth: cashSeries.zeroAt,
+            retentionAt12: r12 ? r12.yours : null,
+            benchmarkAt12: r12 ? r12.benchmark : null,
+          };
+        }, [mrr, momGrowth, burn, cashSeries, retentionSeries]);
+
+        const mrrChartInsights = useMemo(() => {
+          const arr = [];
+          const m1 = chartInsights.monthsTo1MARR;
+          const m10 = chartInsights.monthsTo10MARR;
+          if (m1 === 0) arr.push('Already past $1M ARR. Next milestone: $10M.');
+          else if (m1 != null) arr.push('Reach $1M ARR in ~' + m1 + ' months at base growth.');
+          else arr.push('$1M ARR is unreachable at 0% growth — push MoM up to project a path.');
+          if (m10 != null && m10 !== 0) arr.push('$10M ARR projected at month ' + m10 + ' (' + Math.round(m10/12*10)/10 + ' yrs).');
+          arr.push('Month 36 base case: ' + formatCurrency(chartInsights.mrrMonth36) + ' MRR (' + formatCurrency(chartInsights.mrrMonth36 * 12) + ' ARR).');
+          return arr;
+        }, [chartInsights]);
+
+        const cashChartInsights = useMemo(() => {
+          const arr = [];
+          if (chartInsights.zeroCashMonth != null) {
+            arr.push('Cash hits zero at ' + fullDate(chartInsights.zeroCashMonth) + ' (month ' + chartInsights.zeroCashMonth + ') — fundraise or cut burn before this date.');
+          } else if (chartInsights.breakEvenMonth != null) {
+            arr.push('Cash flow turns positive at ' + fullDate(chartInsights.breakEvenMonth) + ' (month ' + chartInsights.breakEvenMonth + ') — MRR catches OPEX before cash dries up.');
+          } else {
+            arr.push('No cash-flow break-even at current growth — every month is pure burn.');
+          }
+          if (chartInsights.firstDangerMonth != null) {
+            arr.push('Enters the <3-months-burn danger zone at month ' + chartInsights.firstDangerMonth + '. That\'s the latest you can start fundraising.');
+          } else {
+            arr.push('Stays comfortably above the 3-months-burn safety threshold.');
+          }
+          arr.push('OPEX baseline: ' + formatCurrency(mrr + burn) + '/mo. Burn shrinks as MRR grows.');
+          return arr;
+        }, [chartInsights, mrr, burn]);
+
+        const unitEconInsights = useMemo(() => {
+          const arr = [];
+          const r = kpis.ltvCac;
+          if (Number.isFinite(r)) {
+            const verdict = r >= 3 ? 'healthy — every $1 of CAC returns $' + r.toFixed(1) + ' over the customer lifetime.'
+                          : r >= 1 ? 'breakeven — barely covering acquisition cost.'
+                          : 'losing money on every customer acquired.';
+            arr.push('LTV is ' + r.toFixed(1) + '× CAC: ' + verdict);
+          } else {
+            arr.push('LTV is infinite (zero churn). The bar caps at 50× CAC for legibility.');
+          }
+          arr.push('Gross profit per customer: ' + formatCurrency(kpis.grossProfitPerCust) + '/mo. CAC payback: ' + formatMonths(kpis.cacPayback) + '.');
+          if (Number.isFinite(r) && r < 3) arr.push('Lever to pull: raise ARPA, raise gross margin, or cut CAC. A 3× ratio is the venture-grade threshold.');
+          return arr;
+        }, [kpis]);
+
+        const retentionInsights = useMemo(() => {
+          const arr = [];
+          const yours = chartInsights.retentionAt12;
+          const bench = chartInsights.benchmarkAt12;
+          if (yours != null && bench != null) {
+            const gap = bench - yours;
+            arr.push('Year-1 gross retention: ' + yours.toFixed(0) + '% vs best-in-class ' + bench.toFixed(0) + '% — a ' + gap.toFixed(0) + ' percentage-point gap.');
+            if (gap > 30) arr.push('Severe leakage. Cutting churn 1pp meaningfully extends LTV — start there before scaling spend.');
+            else if (gap > 10) arr.push('Material gap. Each 0.5pp churn improvement compounds into bigger LTV.');
+            else if (gap > 2) arr.push('Close to benchmark. Marginal churn work yields diminishing returns; focus on expansion.');
+            else arr.push('Best-in-class retention. Now invest in expansion revenue and acquisition.');
+          }
+          arr.push('At ' + formatPercent(churn) + ' monthly churn, average customer life ≈ ' + (churn > 0 ? (1/(churn/100)).toFixed(0) + ' months.' : 'infinite.'));
+          return arr;
+        }, [chartInsights, churn]);
+
+        const ltvCacStatus = kpis.ltvCac >= 3 ? 'green' : kpis.ltvCac >= 1 ? 'yellow' : 'red';
+        const paybackStatus = kpis.cacPayback < 12 ? 'green' : kpis.cacPayback <= 18 ? 'yellow' : 'red';
+        const runwayStatus = kpis.runway > 18 ? 'green' : kpis.runway >= 12 ? 'yellow' : 'red';
+        const nrrStatus = kpis.nrr > 100 ? 'green' : kpis.nrr >= 80 ? 'yellow' : 'red';
+        const magicStatus = kpis.magic >= 0.75 ? 'green' : kpis.magic >= 0.5 ? 'yellow' : 'red';
+
+        const tickAxis = { fill: '#64748b', fontSize: 11 };
+        const grid = '#e2e8f0';
+        const axisStroke = '#cbd5e1';
+        const xTickFormatter = (i) => (i % 6 === 0 ? monthAxisLabel(i) : '');
+
+        const handleGenerate = async (ctx) => {
+          setModalOpen(false);
+          setReport('');
+          setReportError('');
+          setReportLoading(true);
+          try {
+            try { localStorage.setItem('anthropic-api-key', ctx.apiKey); setSavedKey(ctx.apiKey); } catch {}
+            const userMsg = buildUserMessage(ctx, kpis, chartInsights, mrr, momGrowth, expansionRate, churn, cac, grossMargin, burn, cash, arpa);
+            const text = await callClaude(ctx.apiKey, userMsg);
+            setReport(text);
+          } catch (e) {
+            setReportError(e && (e.message || String(e)) || 'Unknown error');
+          } finally {
+            setReportLoading(false);
+          }
+        };
+
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-emerald-100 via-emerald-50 to-lime-100 text-slate-900">
+            <header className="px-6 py-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-slate-900 flex items-center justify-center shadow-lg">
+                  <BarChart3 size={22} className="text-lime-300" />
+                </div>
+                <div>
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <h1 className="text-2xl font-bold tracking-tight text-slate-900">SaaS Financial Dashboard</h1>
+                    <span className="text-xs font-medium text-slate-500">by Diego Pilosof</span>
+                  </div>
+                  <p className="text-xs text-slate-600">Real-time metrics for growth-stage startups</p>
+                  <button onClick={() => setHelpOpen(true)}
+                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white text-slate-900 hover:bg-slate-50 shadow-md ring-1 ring-slate-200 transition-colors">
+                    <HelpCircle size={14}/> How to use this dashboard
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-6 p-6 pt-0">
+              <aside className="bg-white rounded-2xl p-5 shadow-md h-fit lg:sticky lg:top-6 relative z-30">
+                <div className="flex items-center gap-2 mb-5">
+                  <Activity size={16} className="text-slate-900" />
+                  <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Inputs</h2>
+                </div>
+
+                <div className="mb-5">
+                  <h3 className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-3">Revenue</h3>
+                  <SliderInput label="MRR" icon={DollarSign} value={mrr} onChange={setMrr}
+                    min={1000} max={500000} step={1000} format={formatCurrency}
+                    tooltip="Monthly Recurring Revenue. Sum of all active subscription revenue in a given month. Find it in your billing platform (Stripe, Chargebee, Recurly) or CRM. The heartbeat of any SaaS business." />
+                  <SliderInput label="MoM Growth Rate" icon={TrendingUp} value={momGrowth} onChange={setMomGrowth}
+                    min={0} max={30} step={0.5} format={formatPercent}
+                    tooltip="Month-over-Month growth in new MRR. Calculate it as: (This month's MRR − Last month's MRR) / Last month's MRR × 100. Healthy early-stage SaaS: 10–20%. Find it by comparing monthly revenue exports from your billing tool." />
+                  <SliderInput label="Expansion MRR Rate" icon={Repeat} value={expansionRate} onChange={setExpansionRate}
+                    min={0} max={10} step={0.5} format={formatPercent}
+                    tooltip="Percentage of new revenue generated from existing customers (upsells, cross-sells). Find it in your billing platform. Crucial for offsetting churn." />
+                  <SliderInput label="ARPA" icon={Users} value={arpa} onChange={setArpa}
+                    min={50} max={5000} step={50} format={formatCurrency}
+                    tooltip="Average Revenue Per Account. Average MRR per paying customer. Formula: MRR / Total active customers. Find it in your billing platform. Drives LTV and segmentation strategy." />
+                </div>
+
+                <div className="mb-5">
+                  <h3 className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-3">Customer Economics</h3>
+                  <SliderInput label="Monthly Churn Rate" icon={Activity} value={churn} onChange={setChurn}
+                    min={0} max={15} step={0.1} format={formatPercent}
+                    tooltip="Percentage of MRR lost each month from cancellations or downgrades. Formula: Churned MRR / MRR at start of month × 100. Find it in your subscription analytics. Best-in-class B2B SaaS: below 1% monthly." />
+                  <SliderInput label="CAC" icon={Target} value={cac} onChange={setCac}
+                    min={100} max={10000} step={50} format={formatCurrency}
+                    tooltip="Customer Acquisition Cost. Total sales & marketing spend divided by number of new customers acquired in the same period. Formula: S&M spend / New customers. Find S&M spend in your P&L or accounting software (QuickBooks, Xero)." />
+                  <SliderInput label="Gross Margin" icon={BarChart3} value={grossMargin} onChange={setGrossMargin}
+                    min={30} max={95} step={1} format={formatPercent}
+                    tooltip="Revenue minus Cost of Goods Sold (COGS), divided by Revenue. For SaaS, COGS includes hosting, support, onboarding. Find it in your P&L. Healthy SaaS: 70–85%." />
+                </div>
+
+                <div>
+                  <h3 className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-3">Cash Position</h3>
+                  <SliderInput label="Monthly Burn Rate" icon={Flame} value={burn} onChange={setBurn}
+                    min={10000} max={1000000} step={5000} format={formatCurrency}
+                    tooltip="Net cash your company spends each month (cash out minus cash in from operations). Find it in your bank statement or cash flow statement. Critical for survival planning." />
+                  <SliderInput label="Cash in Bank" icon={Wallet} value={cash} onChange={setCash}
+                    min={50000} max={10000000} step={50000} format={formatCurrency}
+                    tooltip="Total liquid cash available right now across all company accounts. Check your bank dashboard or balance sheet. This is your 'fuel tank'." />
+                </div>
+              </aside>
+
+              <main className="space-y-6 min-w-0 relative z-10">
+                <section className="grid grid-cols-2 md:grid-cols-4 gap-4 relative">
+                  <KpiCard icon={DollarSign} label="ARR" value={formatCurrency(kpis.arr)}
+                    subtext={'Based on ' + formatCurrency(mrr) + ' MRR × 12'} status="neutral" highlight={true}
+                    tooltip="Annual Recurring Revenue = MRR × 12. The standard benchmark VCs use to value SaaS companies. Rule of thumb: SaaS companies trade at 5–15× ARR depending on growth." />
+                  <KpiCard icon={Users} label="LTV" value={formatCurrency(kpis.ltv)}
+                    subtext={Number.isFinite(kpis.ltv) ? (kpis.ltv/cac).toFixed(1) + '× CAC' : 'Zero churn'} status="neutral"
+                    tooltip="Lifetime Value. Expected total revenue from one customer over their lifetime. Formula: ARPA × Gross Margin% / Monthly Churn. Higher is better. Target: LTV should be at least 3× your CAC." />
+                  <KpiCard icon={Target} label="LTV : CAC"
+                    value={Number.isFinite(kpis.ltvCac) ? kpis.ltvCac.toFixed(1) + '×' : '∞'}
+                    subtext={kpis.ltvCac >= 3 ? 'Healthy unit economics' : kpis.ltvCac >= 1 ? 'Breaking even' : 'Losing money on each customer'}
+                    status={ltvCacStatus}
+                    tooltip="How much value you generate per dollar spent acquiring a customer. Formula: LTV / CAC. Green (>3): healthy. Yellow (1–3): breaking even. Red (<1): losing money on every customer." />
+                  <KpiCard icon={Calendar} label="CAC Payback" value={formatMonths(kpis.cacPayback)}
+                    subtext={kpis.cacPayback < 12 ? 'Fast recovery' : kpis.cacPayback <= 18 ? 'Acceptable' : 'Too slow — investigate'}
+                    status={paybackStatus}
+                    tooltip="How many months to recover your CAC from a customer's gross profit. Formula: CAC / (ARPA × Gross Margin%). Green: <12 months. Yellow: 12–18 months. Red: >18 months." />
+                  <KpiCard icon={Wallet} label="Runway" value={formatMonths(kpis.runway)}
+                    subtext={kpis.runway > 18 ? 'Plenty of time' : kpis.runway >= 12 ? 'Start planning raise' : 'Raise or cut burn now'}
+                    status={runwayStatus}
+                    tooltip="Static Runway: Cash / Burn, assuming no MRR growth. The Cash Runway chart below uses dynamic burn (revenue offsets OPEX) and may show a longer survival window if growth catches up. Green: >18 mo. Yellow: 12–18 mo. Red: <12 mo — time to fundraise or cut burn." />
+                  <KpiCard icon={Repeat} label="NRR" value={formatPercent(kpis.nrr)}
+                    subtext={kpis.nrr > 120 ? 'World-class' : kpis.nrr > 100 ? 'Net expansion' : kpis.nrr >= 80 ? 'Below par' : 'Severe leakage'}
+                    status={nrrStatus}
+                    tooltip="Net Revenue Retention. Percentage of MRR retained from existing customers. Formula: 100% + Expansion MRR Rate − Monthly Churn Rate. World-class: >120%. Good: >100% (expansion offsets churn)." />
+                  <KpiCard icon={Zap} label="Magic Number" value={formatNumber(kpis.magic)}
+                    subtext={kpis.magic >= 0.75 ? 'Efficient growth engine' : kpis.magic >= 0.5 ? 'Acceptable' : 'Inefficient spend'}
+                    status={magicStatus}
+                    tooltip="Estimated Magic Number. Sales efficiency ratio. How much ARR you generate for every dollar spent on S&M. Formula: (MRR growth × 12) / S&M spend. Above 0.75 = efficient growth engine. S&M assumed at 40% of burn for this estimate." />
+                  <KpiCard icon={Calendar} label="Zero-Cash Date" value={kpis.zeroCashDate}
+                    subtext={Number.isFinite(kpis.runway) ? 'In ~' + Math.round(kpis.runway) + ' months' : 'Cash flow positive'}
+                    status={runwayStatus}
+                    tooltip="Projected Zero-Cash Date. The calendar month when cash hits zero at current burn rate with no new revenue offset. Calculated automatically. This is why fundraising timelines matter — add 6 months buffer." />
+                </section>
+
+                {/* Generate Report button */}
+                <div className="flex justify-center">
+                  <button onClick={() => setModalOpen(true)}
+                    className="group flex items-center gap-2 px-6 py-3 rounded-full text-sm font-semibold bg-slate-900 text-lime-300 hover:bg-slate-800 shadow-lg shadow-slate-900/20 hover:shadow-slate-900/40 transition-all">
+                    <Sparkles size={16} className="group-hover:rotate-12 transition-transform"/>
+                    Generate Report
+                  </button>
+                </div>
+
+                {/* Loading / error / report */}
+                {reportLoading && <LoadingPanel />}
+                {reportError && !reportLoading && (
+                  <ErrorPanel message={reportError} onClose={() => setReportError('')} />
+                )}
+                {report && !reportLoading && (
+                  <ReportPanel markdown={report} onClose={() => setReport('')} />
+                )}
+
+                <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                  <ChartCard title="MRR Growth Projection" subtitle={'Base, optimistic (+20%), pessimistic (−30%) over ' + horizon + ' months'} insights={mrrChartInsights}
+                    tooltip="Projects your MRR forward at three growth rates: Base (your current MoM), Optimistic (+20% of base), and Pessimistic (−30% of base). Reference lines mark $1M and $10M ARR — the standard SaaS scaling milestones VCs benchmark against.">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={mrrSeries} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                        <CartesianGrid stroke={grid} strokeDasharray="3 3" />
+                        <XAxis dataKey="month" tick={tickAxis} tickFormatter={xTickFormatter} stroke={axisStroke} />
+                        <YAxis tick={tickAxis} tickFormatter={formatCurrency} stroke={axisStroke} width={60} />
+                        <RTooltip content={<RechartsTooltip valueFormatter={formatCurrency} labelFormatter={(m) => fullDate(m)} />} />
+                        <Legend wrapperStyle={{ fontSize: 11, color: '#475569' }} />
+                        <ReferenceLine y={1000000/12} stroke="#94a3b8" strokeDasharray="4 4"
+                          label={{ value: '$1M ARR', fill: '#475569', fontSize: 10, position: 'right' }} />
+                        <ReferenceLine y={10000000/12} stroke="#94a3b8" strokeDasharray="4 4"
+                          label={{ value: '$10M ARR', fill: '#475569', fontSize: 10, position: 'right' }} />
+                        <Line type="monotone" dataKey="optimistic" name="Optimistic" stroke="#10b981" strokeWidth={2} dot={false} />
+                        <Line type="monotone" dataKey="base" name="Base" stroke="#0f172a" strokeWidth={2.5} dot={false} />
+                        <Line type="monotone" dataKey="pessimistic" name="Pessimistic" stroke="#f43f5e" strokeWidth={2} dot={false} strokeDasharray="5 5" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </ChartCard>
+
+                  <ChartCard title="Cash Runway" subtitle={'Dynamic burn = OPEX (' + formatCurrency(mrr + burn) + ') − projected MRR each month'} insights={cashChartInsights}
+                    tooltip="Models cash month-by-month using a dynamic burn calculation: every month's projected MRR offsets the fixed OPEX (starting MRR + starting burn). The red zone marks where cash drops below 3× monthly burn — your fundraise-now signal. The dashed line marks zero-cash month.">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={cashSeries.rows} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="cashGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#bef264" stopOpacity={0.85} />
+                            <stop offset="100%" stopColor="#bef264" stopOpacity={0.1} />
+                          </linearGradient>
+                          <linearGradient id="dangerGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.5} />
+                            <stop offset="100%" stopColor="#f43f5e" stopOpacity={0.05} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke={grid} strokeDasharray="3 3" />
+                        <XAxis dataKey="month" tick={tickAxis} tickFormatter={xTickFormatter} stroke={axisStroke} />
+                        <YAxis tick={tickAxis} tickFormatter={formatCurrency} stroke={axisStroke} width={60} />
+                        <RTooltip content={<RechartsTooltip valueFormatter={formatCurrency} labelFormatter={(m) => fullDate(m)} />} />
+                        <Legend wrapperStyle={{ fontSize: 11, color: '#475569' }} />
+                        <Area type="monotone" dataKey="cash" name="Cash Remaining" stroke="#0f172a" strokeWidth={2} fill="url(#cashGrad)" />
+                        <Area type="monotone" dataKey="danger" name="Danger Zone (<3mo burn)" stroke="#f43f5e" strokeWidth={2} fill="url(#dangerGrad)" connectNulls={false} />
+                        {cashSeries.zeroAt && (
+                          <ReferenceLine x={cashSeries.zeroAt} stroke="#f43f5e" strokeDasharray="4 4"
+                            label={{ value: 'Zero @ ' + fullDate(cashSeries.zeroAt), fill: '#e11d48', fontSize: 10, position: 'top' }} />
+                        )}
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </ChartCard>
+
+                  <ChartCard title="Unit Economics: LTV vs CAC" subtitle="Should LTV dwarf CAC? Visual comparison of value per customer" insights={unitEconInsights}
+                    tooltip="Compares the three values that determine whether your acquisition spend is profitable: CAC (cost to acquire one customer), Gross Profit per customer per month, and LTV (total gross profit over the customer's lifetime). LTV should be ≥3× CAC for a healthy SaaS — anything less means you're not scaling efficiently.">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={unitEconSeries} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                        <CartesianGrid stroke={grid} strokeDasharray="3 3" />
+                        <XAxis dataKey="name" tick={tickAxis} stroke={axisStroke} />
+                        <YAxis tick={tickAxis} tickFormatter={formatCurrency} stroke={axisStroke} width={60} />
+                        <RTooltip content={<RechartsTooltip valueFormatter={formatCurrency} />} />
+                        <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+                          {unitEconSeries.map((d, i) => <Cell key={i} fill={d.fill} />)}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </ChartCard>
+
+                  <ChartCard title="Cohort Retention Curve" subtitle={'Your ' + formatPercent(churn) + ' churn vs best-in-class 0.4% benchmark'} insights={retentionInsights}
+                    tooltip="Shows what % of customers remain after each month using exponential decay: R(t) = (1 − churn)^t. Compared against a 0.4% best-in-class monthly churn benchmark (B2B SaaS top decile). The red fill is the gap between your retention and the benchmark — that gap compounds into LTV loss.">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={retentionSeries} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                        <CartesianGrid stroke={grid} strokeDasharray="3 3" />
+                        <XAxis dataKey="month" tick={tickAxis} stroke={axisStroke}
+                          label={{ value: 'Month', fill: '#475569', fontSize: 10, position: 'insideBottom', offset: -2 }} />
+                        <YAxis tick={tickAxis} tickFormatter={(v) => v.toFixed(0) + '%'} stroke={axisStroke} width={50} domain={[0, 100]} />
+                        <RTooltip content={<RechartsTooltip valueFormatter={(v) => v.toFixed(1) + '%'} labelFormatter={(m) => 'Month ' + m} />} />
+                        <Legend wrapperStyle={{ fontSize: 11, color: '#475569' }} />
+                        <Area type="monotone" dataKey="yours" name="Your Retention" stackId="r" stroke="#0f172a" strokeWidth={2} fill="#bef264" fillOpacity={0.5} />
+                        <Area type="monotone" dataKey="gap" name="Gap to Benchmark" stackId="r" stroke="none" fill="#f43f5e" fillOpacity={0.3} />
+                        <Line type="monotone" dataKey="benchmark" name="Benchmark (0.4%)" stroke="#059669" strokeWidth={2.5} strokeDasharray="5 5" dot={false} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </ChartCard>
+                </section>
+              </main>
+            </div>
+
+            <ContextModal open={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleGenerate} initialKey={savedKey} />
+            <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+          </div>
+        );
+      }
+
+      ReactDOMClient.createRoot(document.getElementById('root')).render(<SaasFinancialDashboard />);
+    }
+  </script>
+</body>
+</html>

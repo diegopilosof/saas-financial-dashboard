@@ -1,0 +1,14 @@
+# Local config — contains the Anthropic API key. Never commit.
+config.local.js
+config.example.js
+
+# Claude Code local session data
+.claude/
+
+# macOS junk
+.DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
